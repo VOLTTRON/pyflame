@@ -10,7 +10,7 @@
 
 bin_PROGRAMS = pyflame
 pyflame_SOURCES = aslr.cc frame.cc thread.cc namespace.cc posix.cc ptrace.cc pyflame.cc pyfrob.cc symbol.cc
-pyflame_LDADD =
+pyflame_LDADD = $(CAPSTONE_LIBS)
 
 noinst_LTLIBRARIES =
 

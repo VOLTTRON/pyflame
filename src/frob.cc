@@ -65,7 +65,9 @@ unsigned long StringSize(unsigned long addr) {
   return addr + offsetof(PyVarObject, ob_size);
 }
 
-std::string StringData(pid_t pid, unsigned long addr) { return StringDataPython3(pid, addr); }
+std::string StringData(pid_t pid, unsigned long addr) {
+  return StringDataPython3(pid, addr);
+}
 
 unsigned long ByteData(unsigned long addr) {
   return addr + offsetof(PyBytesObject, ob_sval);
@@ -79,7 +81,9 @@ unsigned long StringSize(unsigned long addr) {
   return addr + offsetof(PyVarObject, ob_size);
 }
 
-std::string StringData(pid_t pid, unsigned long addr) { return StringDataPython3(pid, addr); }
+std::string StringData(pid_t pid, unsigned long addr) {
+  return StringDataPython3(pid, addr);
+}
 
 unsigned long ByteData(unsigned long addr) {
   return addr + offsetof(PyBytesObject, ob_sval);
@@ -262,10 +266,6 @@ std::vector<Thread> GetThreads(pid_t pid, PyAddresses addrs,
     } else if (addrs.interp_head_addr != 0) {
       istate =
           static_cast<unsigned long>(PtracePeek(pid, addrs.interp_head_addr));
-    } else if (addrs.interp_head_hint != 0) {
-      // Finally. check if we have already put a hint into interp_head_hint -
-      // currently this can only happen if we called PyInterpreterState_Head.
-      istate = addrs.interp_head_hint;
     }
     if (istate != 0) {
       tstate = static_cast<unsigned long>(

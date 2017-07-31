@@ -15,6 +15,7 @@
 #include "./ptrace.h"
 
 #include <dirent.h>
+#include <cassert>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
@@ -23,6 +24,8 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+
+#include <capstone/capstone.h>
 
 #include <sys/mman.h>
 #include <sys/ptrace.h>
@@ -171,32 +174,6 @@ std::unique_ptr<uint8_t[]> PtracePeekBytes(pid_t pid, unsigned long addr,
 }
 
 #if defined(__amd64__) && ENABLE_THREADS
-static const long syscall_x86 = 0x050f;  // x86 code for SYSCALL
-
-static unsigned long probe_ = 0;
-
-static unsigned long AllocPage(pid_t pid) {
-  user_regs_struct oldregs = PtraceGetRegs(pid);
-  long orig_code = PtracePeek(pid, oldregs.rip);
-  PtracePoke(pid, oldregs.rip, syscall_x86);
-
-  user_regs_struct newregs = oldregs;
-  newregs.rax = SYS_mmap;
-  newregs.rdi = 0;                                   // addr
-  newregs.rsi = getpagesize();                       // len
-  newregs.rdx = PROT_READ | PROT_WRITE | PROT_EXEC;  // prot
-  newregs.r10 = MAP_PRIVATE | MAP_ANONYMOUS;         // flags
-  newregs.r8 = -1;                                   // fd
-  newregs.r9 = 0;                                    // offset
-  PtraceSetRegs(pid, newregs);
-  PtraceSingleStep(pid);
-  unsigned long result = PtraceGetRegs(pid).rax;
-
-  PtraceSetRegs(pid, oldregs);
-  PtracePoke(pid, oldregs.rip, orig_code);
-
-  return result;
-}
 
 static std::vector<pid_t> ListThreads(pid_t pid) {
   std::vector<pid_t> result;
@@ -216,78 +193,40 @@ static std::vector<pid_t> ListThreads(pid_t pid) {
   return result;
 }
 
-static void PauseChildThreads(pid_t pid) {
-  for (auto tid : ListThreads(pid)) {
-    if (tid != pid) PtraceAttach(tid);
+long PtraceDecodeInterpHead(pid_t pid, unsigned long fn_addr) {
+  csh handle;
+  if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK) {
+    return -1;
   }
-}
+  assert(cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON) == CS_ERR_OK);
 
-static void ResumeChildThreads(pid_t pid) {
-  for (auto tid : ListThreads(pid)) {
-    if (tid != pid) PtraceDetach(tid);
-  }
-}
-
-long PtraceCallFunction(pid_t pid, unsigned long addr) {
-  if (probe_ == 0) {
-    PauseChildThreads(pid);
-    probe_ = AllocPage(pid);
-    ResumeChildThreads(pid);
-    if (probe_ == (unsigned long)MAP_FAILED) {
-      return -1;
+  cs_insn *insn = cs_malloc(handle);
+  uint64_t addr = fn_addr;
+  size_t code_size = 16;
+  const std::unique_ptr<uint8_t[]> bytes =
+      PtracePeekBytes(pid, fn_addr, code_size);
+  const uint8_t *bytes_loc = bytes.get();
+  assert(cs_disasm_iter(handle, &bytes_loc, &code_size, &addr, insn));
+  assert(insn->detail != nullptr);
+  assert(strcmp(insn->mnemonic, "mov") == 0);
+  const size_t mov_sz = insn->size;
+  size_t disp = 0;
+  for (size_t i = 0; i < insn->detail->x86.op_count; i++) {
+    if (insn->detail->x86.operands[i].type == X86_OP_MEM) {
+      disp = insn->detail->x86.operands[i].mem.disp;
+      break;
     }
-
-    // std::cerr << "probe point is at " << reinterpret_cast<void *>(probe_)
-    //           << "\n";
-    long code = 0;
-    uint8_t *new_code_bytes = (uint8_t *)&code;
-    new_code_bytes[0] = 0xff;  // CALL
-    new_code_bytes[1] = 0xd0;  // rax
-    new_code_bytes[2] = 0xcc;  // TRAP
-    PtracePoke(pid, probe_, code);
   }
+  assert(disp);
 
-  user_regs_struct oldregs = PtraceGetRegs(pid);
-  user_regs_struct newregs = oldregs;
-  newregs.rax = addr;
-  newregs.rip = probe_;
+  // sanity check that the next insn is a ret
+  assert(cs_disasm_iter(handle, &bytes_loc, &code_size, &addr, insn));
+  assert(strcmp(insn->mnemonic, "ret") == 0);
 
-  PtraceSetRegs(pid, newregs);
-  PtraceCont(pid);
-
-  newregs = PtraceGetRegs(pid);
-  PtraceSetRegs(pid, oldregs);
-  return newregs.rax;
-};
-
-void PtraceCleanup(pid_t pid) {
-  if (probe_ == 0) {
-    return;
-  }
-
-  user_regs_struct oldregs = PtraceGetRegs(pid);
-  long orig_code = PtracePeek(pid, oldregs.rip);
-
-  user_regs_struct newregs = oldregs;
-  newregs.rax = SYS_munmap;
-  newregs.rdi = probe_;         // addr
-  newregs.rsi = getpagesize();  // len
-
-  PauseChildThreads(pid);
-
-  PtracePoke(pid, oldregs.rip, syscall_x86);
-  PtraceSetRegs(pid, newregs);
-  PtraceSingleStep(pid);
-  PtracePoke(pid, oldregs.rip, orig_code);
-  PtraceSetRegs(pid, oldregs);
-
-  ResumeChildThreads(pid);
-  PtraceDetach(pid);
-
-  probe_ = 0;
+  return fn_addr + disp + mov_sz;
 }
-#else
-void PtraceCleanup(pid_t pid) { PtraceDetach(pid); }
 #endif
+
+void PtraceCleanup(pid_t pid) { PtraceDetach(pid); }
 
 }  // namespace pyflame

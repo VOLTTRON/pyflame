@@ -67,6 +67,10 @@ AC_FUNC_LSTAT_FOLLOWS_SLASHED_SYMLINK
 AC_FUNC_MMAP
 AC_CHECK_FUNCS([getpagesize memmove munmap strerror strtol strtoul])
 
+PKG_CHECK_MODULES([CAPSTONE], [capstone], [enable_capstone="yes"], [AC_MSG_WARN([Building without Capstone support])])
+AM_CONDITIONAL([ENABLE_CAPSTONE], [test x"$enable_capstone" = xyes])
+AM_COND_IF([ENABLE_CAPSTONE], [AC_DEFINE([ENABLE_CAPSTONE], [1], [Capstone support will be enabled.])])
+
 PKG_CHECK_MODULES([PY26], [python2], [enable_py26="yes"], [AC_MSG_WARN([Building without Python 2.6/2.7 support])])
 AM_CONDITIONAL([ENABLE_PY26], [test x"$enable_py26" = xyes])
 AM_COND_IF([ENABLE_PY26], [AC_DEFINE([ENABLE_PY26], [1], [Python 2.6/2.7 will be enabled])])

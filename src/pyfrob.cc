@@ -134,9 +134,9 @@ void PyFrob::set_addrs_(PyABI *abi) {
   // PyInterpreterState_Head
   // function, use evil non-portable ptrace tricks to call the function
   if (enable_threads_ && addrs_.interp_head_addr == 0 &&
-      addrs_.interp_head_hint == 0 && addrs_.interp_head_fn_addr != 0) {
-    addrs_.interp_head_hint =
-        PtraceCallFunction(pid_, addrs_.interp_head_fn_addr);
+      addrs_.interp_head_fn_addr != 0) {
+    addrs_.interp_head_addr =
+        PtraceDecodeInterpHead(pid_, addrs_.interp_head_fn_addr);
   }
 #endif
 }

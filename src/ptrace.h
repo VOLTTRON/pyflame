@@ -57,8 +57,7 @@ void PtraceCont(pid_t pid);
 void PtraceSingleStep(pid_t pid);
 
 #if ENABLE_THREADS
-// call a function pointer
-long PtraceCallFunction(pid_t pid, unsigned long addr);
+long PtraceDecodeInterpHead(pid_t pid, unsigned long fn_addr);
 #endif
 
 // maybe dealloc the page allocated in PtraceCallFunction();
