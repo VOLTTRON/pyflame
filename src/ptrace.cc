@@ -174,39 +174,37 @@ std::unique_ptr<uint8_t[]> PtracePeekBytes(pid_t pid, unsigned long addr,
 }
 
 #if defined(__amd64__) && ENABLE_THREADS
+static csh capstone_handle = 0;
+static cs_insn *insn = nullptr;
 
-static std::vector<pid_t> ListThreads(pid_t pid) {
-  std::vector<pid_t> result;
-  std::ostringstream dirname;
-  dirname << "/proc/" << pid << "/task";
-  DIR *dir = opendir(dirname.str().c_str());
-  if (dir == nullptr) {
-    throw PtraceException("Failed to list threads");
+static int InitCapstone() {
+  if (capstone_handle != 0) {
+    return 0;
   }
-  dirent *entry;
-  while ((entry = readdir(dir)) != nullptr) {
-    std::string name = entry->d_name;
-    if (name != "." && name != "..") {
-      result.push_back(static_cast<pid_t>(std::stoi(name)));
-    }
+  if (cs_open(CS_ARCH_X86, CS_MODE_64, &capstone_handle) != CS_ERR_OK) {
+    return -1;
   }
-  return result;
+  assert(cs_option(capstone_handle, CS_OPT_DETAIL, CS_OPT_ON) == CS_ERR_OK);
+  insn = cs_malloc(capstone_handle);
+  return 0;
+}
+
+static void FinalizeCapstone() {
+  if (capstone_handle != 0) {
+    cs_free(insn, 1);
+    cs_close(&capstone_handle);
+  }
 }
 
 long PtraceDecodeInterpHead(pid_t pid, unsigned long fn_addr) {
-  csh handle;
-  if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK) {
-    return -1;
-  }
-  assert(cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON) == CS_ERR_OK);
+  assert(InitCapstone() == 0);
 
-  cs_insn *insn = cs_malloc(handle);
   uint64_t addr = fn_addr;
   size_t code_size = 16;
   const std::unique_ptr<uint8_t[]> bytes =
       PtracePeekBytes(pid, fn_addr, code_size);
   const uint8_t *bytes_loc = bytes.get();
-  assert(cs_disasm_iter(handle, &bytes_loc, &code_size, &addr, insn));
+  assert(cs_disasm_iter(capstone_handle, &bytes_loc, &code_size, &addr, insn));
   assert(insn->detail != nullptr);
   assert(strcmp(insn->mnemonic, "mov") == 0);
   const size_t mov_sz = insn->size;
@@ -220,13 +218,16 @@ long PtraceDecodeInterpHead(pid_t pid, unsigned long fn_addr) {
   assert(disp);
 
   // sanity check that the next insn is a ret
-  assert(cs_disasm_iter(handle, &bytes_loc, &code_size, &addr, insn));
+  assert(cs_disasm_iter(capstone_handle, &bytes_loc, &code_size, &addr, insn));
   assert(strcmp(insn->mnemonic, "ret") == 0);
 
   return fn_addr + disp + mov_sz;
 }
 #endif
 
-void PtraceCleanup(pid_t pid) { PtraceDetach(pid); }
+void PtraceCleanup(pid_t pid) {
+  PtraceDetach(pid);
+  FinalizeCapstone();
+}
 
 }  // namespace pyflame
